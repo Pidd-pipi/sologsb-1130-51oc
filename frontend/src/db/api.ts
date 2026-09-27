@@ -4,6 +4,7 @@ import type { Shot } from '../types/shot';
 import type { FrameEntry } from '../types/frame';
 import type { PropState } from '../types/prop';
 import type { TakeLog } from '../types/take';
+import type { ShotSchedule } from '../types/schedule';
 
 export async function initDb(): Promise<void> {
   if (!db.isOpen()) await db.open();
@@ -29,10 +30,11 @@ export async function updateShot(id: number, patch: Partial<Shot>): Promise<void
 }
 
 export async function deleteShot(id: number): Promise<void> {
-  await db.transaction('rw', db.shots, db.frames, db.props, db.takes, async () => {
+  await db.transaction('rw', db.shots, db.frames, db.props, db.takes, db.schedules, async () => {
     await db.frames.where('shotId').equals(id).delete();
     await db.props.where('shotId').equals(id).delete();
     await db.takes.where('shotId').equals(id).delete();
+    await db.schedules.where('shotId').equals(id).delete();
     await db.shots.delete(id);
   });
 }
@@ -132,4 +134,42 @@ export async function deleteTake(id: number): Promise<void> {
 /** 按实拍张数回写镜头进度（Shot 表保存完成百分比快照，便于总览页快速读取） */
 export async function syncShotProgress(shotId: number, percent: number): Promise<void> {
   await db.shots.update(shotId, toPlain({ progressPercent: percent, updatedAt: Date.now() }));
+}
+
+/* ---------------- schedules ---------------- */
+
+export async function listSchedules(): Promise<ShotSchedule[]> {
+  return db.schedules.toArray();
+}
+
+export async function getScheduleByShot(shotId: number): Promise<ShotSchedule | undefined> {
+  return db.schedules.where('shotId').equals(shotId).first();
+}
+
+/**
+ * 原子落库一次排期调整：
+ * next 为调整后应保留的全部排期（按拍摄日/次序排好），
+ * prev 为调整前快照；差集里多出来的新增、变化的更新、消失的删除。
+ */
+export async function saveSchedules(prev: ShotSchedule[], next: ShotSchedule[]): Promise<ShotSchedule[]> {
+  const prevMap = new Map(prev.filter((r) => typeof r.id === 'number').map((r) => [r.id as number, r]));
+  const nextIds = new Set<number>();
+  const saved: ShotSchedule[] = [];
+  await db.transaction('rw', db.schedules, async () => {
+    for (const row of next) {
+      const now = { ...toPlain(row), updatedAt: Date.now() };
+      if (typeof now.id === 'number') {
+        nextIds.add(now.id);
+        await db.schedules.put(now);
+        saved.push(now);
+      } else {
+        const id = await db.schedules.add(now);
+        saved.push({ ...now, id });
+      }
+    }
+    for (const old of prevMap.keys()) {
+      if (!nextIds.has(old)) await db.schedules.delete(old);
+    }
+  });
+  return saved;
 }

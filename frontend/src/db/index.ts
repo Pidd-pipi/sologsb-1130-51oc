@@ -4,6 +4,7 @@
  *   v1 建 shots / frames
  *   v2 增加 props 表与 shotId 索引
  *   v3 增加 takes 表，并按实拍张数回填进度
+ *   v4 增加 schedules 表（镜头拍摄日与当日次序）
  */
 import Dexie from 'dexie';
 import type { Table } from 'dexie';
@@ -11,6 +12,7 @@ import type { Shot } from '../types/shot';
 import type { FrameEntry } from '../types/frame';
 import type { PropState } from '../types/prop';
 import type { TakeLog } from '../types/take';
+import type { ShotSchedule } from '../types/schedule';
 
 export const DB_NAME = 'gbstopmotion-db';
 
@@ -32,6 +34,7 @@ export class StopMotionDb extends Dexie {
   frames!: Table<FrameEntry, number>;
   props!: Table<PropState, number>;
   takes!: Table<TakeLog, number>;
+  schedules!: Table<ShotSchedule, number>;
 
   constructor() {
     super(DB_NAME);
@@ -73,6 +76,14 @@ export class StopMotionDb extends Dexie {
           await tx.table('takes').update(take.id, { percent });
         }
       });
+    this.version(4).stores({
+      shots: '++id, code, status, sceneName',
+      frames: '++id, shotId, frameNo, [shotId+frameNo]',
+      props: '++id, shotId, name, [shotId+fromFrame]',
+      takes: '++id, shotId, date, shotCode',
+      // shotId 唯一索引保证一个镜头只排一个拍摄日
+      schedules: '++id, &shotId, shootDate, [shootDate+order]',
+    });
   }
 }
 

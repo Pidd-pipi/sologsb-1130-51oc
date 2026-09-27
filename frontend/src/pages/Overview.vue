@@ -8,6 +8,7 @@ import { useRouter } from 'vue-router';
 import { storeToRefs } from 'pinia';
 import { useShotStore } from '../stores/shotStore';
 import { useFrameStore } from '../stores/frameStore';
+import { useScheduleStore } from '../stores/scheduleStore';
 import { useProgress } from '../hooks/useProgress';
 import { listAllFrames } from '../db/api';
 import { framesToDuration } from '../utils/frameMath';
@@ -15,11 +16,13 @@ import { formatDateTime } from '../utils/format';
 import ShotProgress from '../components/common/ShotProgress.vue';
 import StatusTag from '../components/common/StatusTag.vue';
 import EmptyState from '../components/common/EmptyState.vue';
+import ScheduleBoard from '../components/schedule/ScheduleBoard.vue';
 import type { FrameEntry } from '../types/frame';
 
 const router = useRouter();
 const shotStore = useShotStore();
 const frameStore = useFrameStore();
+const scheduleStore = useScheduleStore();
 const { shots } = storeToRefs(shotStore);
 const { summaries, overall, loadTakes, loading } = useProgress();
 
@@ -27,11 +30,13 @@ const allFrames = ref<FrameEntry[]>([]);
 
 onMounted(async () => {
   await shotStore.load();
-  await loadTakes();
+  await Promise.all([loadTakes(), scheduleStore.load()]);
   allFrames.value = await listAllFrames();
 });
 
 const summaryOf = (shotId: number | undefined) => summaries.value.find((s) => s.shotId === shotId);
+const scheduleOf = (shotId: number | undefined) =>
+  typeof shotId === 'number' ? scheduleStore.byShot.get(shotId) : undefined;
 
 const rows = computed(() =>
   shots.value.map((shot) => {
@@ -98,6 +103,14 @@ function goDetail(id: number | undefined) {
 
     <div class="panel">
       <div class="panel-head">
+        <h2>拍摄通告排期</h2>
+        <span class="muted">指定拍摄日并排当天顺序，保存在浏览器本地（IndexedDB）</span>
+      </div>
+      <ScheduleBoard :rows="rows" />
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
         <h2>镜头清单</h2>
         <span class="muted">{{ loading ? '读取实拍记录中…' : '数据来源：IndexedDB（gbstopmotion-db）' }}</span>
       </div>
@@ -116,6 +129,7 @@ function goDetail(id: number | undefined) {
             <th>镜号</th>
             <th>场景</th>
             <th>状态</th>
+            <th>拍摄日</th>
             <th>帧率</th>
             <th>帧区间</th>
             <th>帧条目</th>
@@ -130,6 +144,13 @@ function goDetail(id: number | undefined) {
             <td class="mono">{{ row.shot.code }}</td>
             <td>{{ row.shot.sceneName }}</td>
             <td><StatusTag :status="row.shot.status" size="small" /></td>
+            <td>
+              <template v-if="scheduleOf(row.shot.id)">
+                <span class="mono">{{ scheduleOf(row.shot.id)?.shootDate }}</span>
+                <span class="muted"> 当日第 {{ scheduleOf(row.shot.id)?.order }} 个拍</span>
+              </template>
+              <span v-else class="muted">未安排</span>
+            </td>
             <td>{{ row.shot.fps }} fps</td>
             <td class="mono">{{ row.shot.startFrame }} – {{ row.shot.endFrame }}</td>
             <td>{{ row.frameCount }}</td>
