@@ -4,6 +4,7 @@
  *   v1 建 shots / frames
  *   v2 增加 props 表与 shotId 索引
  *   v3 增加 takes 表，并按实拍张数回填进度
+ *   v4 镜头增加拍摄日排期字段（shootDate / dayOrder）
  */
 import Dexie from 'dexie';
 import type { Table } from 'dexie';
@@ -72,6 +73,23 @@ export class StopMotionDb extends Dexie {
           const percent = Math.min(100, Math.round((take.takenFrames / total) * 100));
           await tx.table('takes').update(take.id, { percent });
         }
+      });
+    this.version(4)
+      .stores({
+        shots: '++id, code, status, sceneName, shootDate',
+        frames: '++id, shotId, frameNo, [shotId+frameNo]',
+        props: '++id, shotId, name, [shotId+fromFrame]',
+        takes: '++id, shotId, date, shotCode',
+      })
+      .upgrade(async (tx) => {
+        // v4：为已有镜头补齐排期字段，默认未排期
+        await tx
+          .table('shots')
+          .toCollection()
+          .modify((row: Record<string, unknown>) => {
+            if (typeof row.shootDate !== 'string') row.shootDate = '';
+            if (typeof row.dayOrder !== 'number') row.dayOrder = 0;
+          });
       });
   }
 }

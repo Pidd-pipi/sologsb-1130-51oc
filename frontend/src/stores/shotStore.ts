@@ -92,14 +92,61 @@ export const useShotStore = defineStore('shot', {
       await api.updateShot(id, { status });
       this.shots = this.shots.map((s) => (s.id === id ? { ...s, status, updatedAt: Date.now() } : s));
     },
+    /** 把某一天的当日次序重排为 1..n（保持现有相对顺序），可排除某个 id */
+    async normalizeDay(date: string, excludeId?: number) {
+      const rows = this.shots
+        .filter((s) => s.shootDate === date && s.id !== excludeId)
+        .sort((a, b) => a.dayOrder - b.dayOrder || a.code.localeCompare(b.code, 'zh-Hans-CN'));
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        if (typeof row.id !== 'number' || row.dayOrder === i + 1) continue;
+        await api.updateShot(row.id, { dayOrder: i + 1 });
+        this.shots = this.shots.map((s) => (s.id === row.id ? { ...s, dayOrder: i + 1 } : s));
+      }
+    },
+    /** 指定/调整拍摄日：追加到目标日末尾，并从原日清单移走；空串表示移回未排期。已完成镜头不调整 */
+    async assignShootDate(id: number, date: string) {
+      const shot = this.shots.find((s) => s.id === id);
+      if (!shot || shot.status === '已完成') return;
+      const nextDate = date.trim();
+      if (nextDate === shot.shootDate) return;
+      const oldDate = shot.shootDate;
+      const dayOrder = nextDate
+        ? Math.max(0, ...this.shots.filter((s) => s.shootDate === nextDate).map((s) => s.dayOrder)) + 1
+        : 0;
+      await api.updateShot(id, { shootDate: nextDate, dayOrder });
+      this.shots = this.shots.map((s) => (s.id === id ? { ...s, shootDate: nextDate, dayOrder } : s));
+      if (oldDate) await this.normalizeDay(oldDate, id);
+    },
+    /** 在所在拍摄日内上移/下移一位，只改当日次序。已完成镜头不调整 */
+    async moveInDay(id: number, dir: -1 | 1) {
+      const shot = this.shots.find((s) => s.id === id);
+      if (!shot || !shot.shootDate || shot.status === '已完成') return;
+      const rows = this.shots
+        .filter((s) => s.shootDate === shot.shootDate)
+        .sort((a, b) => a.dayOrder - b.dayOrder || a.code.localeCompare(b.code, 'zh-Hans-CN'));
+      const idx = rows.findIndex((s) => s.id === id);
+      const swapIdx = idx + dir;
+      if (idx < 0 || swapIdx < 0 || swapIdx >= rows.length) return;
+      [rows[idx], rows[swapIdx]] = [rows[swapIdx], rows[idx]];
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        if (typeof row.id !== 'number' || row.dayOrder === i + 1) continue;
+        await api.updateShot(row.id, { dayOrder: i + 1 });
+        this.shots = this.shots.map((s) => (s.id === row.id ? { ...s, dayOrder: i + 1 } : s));
+      }
+    },
     async syncProgress(id: number, percent: number) {
       await api.syncShotProgress(id, percent);
       this.shots = this.shots.map((s) => (s.id === id ? { ...s, progressPercent: percent } : s));
     },
     async remove(id: number) {
+      const shot = this.shots.find((s) => s.id === id);
       await api.deleteShot(id);
       this.shots = this.shots.filter((s) => s.id !== id);
       if (this.currentId === id) this.currentId = null;
+      // 删除已排期镜头后，把原日期的次序补齐
+      if (shot?.shootDate) await this.normalizeDay(shot.shootDate);
     },
     /** 依据时长给出帧区间预览（不落库） */
     previewRange(startFrame: number, durationSec: number, fps: number) {

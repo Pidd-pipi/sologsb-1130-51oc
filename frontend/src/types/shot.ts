@@ -23,6 +23,10 @@ export interface Shot {
   endFrame: number;
   /** 拍摄状态 */
   status: ShotStatus;
+  /** 计划拍摄日（YYYY-MM-DD），空串表示未排期 */
+  shootDate: string;
+  /** 当日拍摄顺序，从 1 开始，仅在同一拍摄日内比较 */
+  dayOrder: number;
   /** 负责人 */
   owner: string;
   /** 完成百分比快照（由实拍记录回写，0-100） */
@@ -40,6 +44,8 @@ export const createEmptyShot = (): Shot => ({
   startFrame: 1,
   endFrame: 48,
   status: '未开机',
+  shootDate: '',
+  dayOrder: 0,
   owner: '',
   progressPercent: 0,
   createdAt: Date.now(),
